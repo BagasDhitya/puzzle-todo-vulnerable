@@ -80,7 +80,8 @@ jobs:
       # SonarQube scan
       - name: SonarQube Scan
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: http://sonarqube:9000
+          SONAR_LOGIN: ${{ secrets.SONAR_TOKEN }}
         run: |
           npx sonar-scanner \
             -Dsonar.projectKey=vuln-todo-demo \
