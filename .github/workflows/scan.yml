@@ -1,0 +1,107 @@
+name: Security & Code Quality Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    services:
+      # Postgres for app
+      app-db:
+        image: postgres:14
+        env:
+          POSTGRES_USER: todo
+          POSTGRES_PASSWORD: todo
+          POSTGRES_DB: todo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U todo -d todo"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      # SonarQube DB
+      sonarqube-db:
+        image: postgres:14
+        env:
+          POSTGRES_USER: sonar
+          POSTGRES_PASSWORD: sonar
+          POSTGRES_DB: sonar
+        ports:
+          - 5433:5432
+
+      # SonarQube server
+      sonarqube:
+        image: sonarqube:latest
+        env:
+          SONARQUBE_JDBC_URL: jdbc:postgresql://localhost:5433/sonar
+          SONARQUBE_JDBC_USERNAME: sonar
+          SONARQUBE_JDBC_PASSWORD: sonar
+        ports:
+          - 9000:9000
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build TypeScript
+        run: npm run build
+
+      # ------------------------------
+      # Trivy scan (container / image)
+      - name: Build Docker image
+        run: docker build -t vuln-todo-demo:latest .
+
+      - name: Run Trivy scan
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v ${{ github.workspace }}/trivy-reports:/reports aquasec/trivy:latest \
+          image --format json --output /reports/trivy-image.json vuln-todo-demo:latest
+
+      - name: Upload Trivy report
+        uses: actions/upload-artifact@v3
+        with:
+          name: trivy-report
+          path: trivy-reports/trivy-image.json
+
+      # ------------------------------
+      # SonarQube scan
+      - name: SonarQube Scan
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          npx sonar-scanner \
+            -Dsonar.projectKey=vuln-todo-demo \
+            -Dsonar.sources=src \
+            -Dsonar.host.url=http://localhost:9000 \
+            -Dsonar.login=$SONAR_TOKEN
+
+      # ------------------------------
+      # ZAP Baseline Scan
+      - name: Install ZAP baseline
+        run: |
+          wget https://github.com/zaproxy/zaproxy/releases/download/v2.13.0/ZAP_2.13.0_Linux.tar.gz -O zap.tar.gz
+          tar -xzf zap.tar.gz
+          export PATH=$PATH:$PWD/ZAP_2.13.0
+
+      - name: Run ZAP Baseline Scan
+        run: |
+          zap-baseline.py -t http://localhost:3000 -r zap_report.html
+
+      - name: Upload ZAP report
+        uses: actions/upload-artifact@v3
+        with:
+          name: zap-report
+          path: zap_report.html
