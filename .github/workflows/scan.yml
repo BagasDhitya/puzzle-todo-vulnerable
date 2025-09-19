@@ -29,7 +29,7 @@ jobs:
       - name: Build TypeScript
         run: npm run build || true
 
-      - name: Start app in background (local runner only)
+      - name: Start app in background
         run: |
           npm run start &
           sleep 10 # tunggu server siap
@@ -70,7 +70,7 @@ jobs:
         run: docker build -t puzzle-todo-vulnerable:latest .
 
       - name: Scan Docker image with Trivy
-        uses: aquasecurity/trivy-action@v0.31.0
+        uses: aquasecurity/trivy-action@0.31.0
         with:
           image-ref: "puzzle-todo-vulnerable:latest"
 
@@ -89,50 +89,38 @@ jobs:
           path: puzzle-todo-vulnerable-trivy-fs-report.json
 
   zap_scan:
-    name: OWASP ZAP DAST Scan (Dockerized app)
+    name: OWASP ZAP DAST Scan
     runs-on: ubuntu-latest
-    needs: docker_build_and_scan
+    needs: build
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Ensure docker is available (info)
-        run: docker --version
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
 
-      - name: Run app container
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build || true
+
+      - name: Start app in background
         run: |
-          # Run the built app image detached; map port 3000 so it's reachable
-          docker run -d --name puzzle_todo_app -p 3000:3000 puzzle-todo-vulnerable:latest
-          # wait for app to be ready
-          sleep 15
+          npm run start &
+          sleep 15 # kasih waktu lebih lama biar server ready
 
-      - name: Run ZAP Baseline Scan (container network = app)
-        run: |
-          # mount the workspace into /zap/wrk so ZAP writes reports back to the repo workspace
-          # use --network container:puzzle_todo_app so localhost inside zap refers to the app container
-          docker run --rm \
-            --network container:puzzle_todo_app \
-            -v "${{ github.workspace }}":/zap/wrk/:rw \
-            ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py \
-              -t http://127.0.0.1:3000 \
-              -J puzzle-todo-vulnerable-zap-report.json \
-              -w puzzle-todo-vulnerable-zap-report.md \
-              -r puzzle-todo-vulnerable-zap-report.html
+      - name: Run ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.7.0
+        with:
+          target: "http://localhost:3000"
+          docker_name: "ghcr.io/zaproxy/zaproxy:stable"
+          cmd_options: "--allow-root -r puzzle-todo-vulnerable-zap-report.html"
 
-      - name: Stop and remove app container
-        if: always()
-        run: |
-          docker rm -f puzzle_todo_app || true
-
-      - name: List generated ZAP files (debug)
-        run: ls -l "${{ github.workspace }}" | sed -n '1,200p'
-
-      - name: Upload ZAP Reports
+      - name: Upload ZAP Report
         uses: actions/upload-artifact@v4
         with:
           name: puzzle-todo-vulnerable-zap-report
-          path: |
-            puzzle-todo-vulnerable-zap-report.html
-            puzzle-todo-vulnerable-zap-report.json
-            puzzle-todo-vulnerable-zap-report.md
+          path: puzzle-todo-vulnerable-zap-report.html
