@@ -46,7 +46,7 @@ jobs:
         uses: sonarsource/sonarcloud-github-action@v2
         with:
           args: >
-            -Dsonar.projectKey=puzzle-todo-vulnerable
+            -Dsonar.projectKey=BagasDhitya_puzzle-todo-vulnerable
             -Dsonar.organization=bagasdhitya
             -Dsonar.sources=src
         env:
