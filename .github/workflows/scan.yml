@@ -1,53 +1,22 @@
-name: Security & Code Quality Scan
+name: Security & Code Scan
 
 on:
   push:
-    branches: [main]
+    branches: ["main"]
   pull_request:
-    branches: [main]
+    branches: ["main"]
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
-  scan:
+  build:
+    name: Build Node App
     runs-on: ubuntu-latest
-    services:
-      # Postgres for app
-      app-db:
-        image: postgres:14
-        env:
-          POSTGRES_USER: todo
-          POSTGRES_PASSWORD: todo
-          POSTGRES_DB: todo
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U todo -d todo"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      # SonarQube DB
-      sonarqube-db:
-        image: postgres:14
-        env:
-          POSTGRES_USER: sonar
-          POSTGRES_PASSWORD: sonar
-          POSTGRES_DB: sonar
-        ports:
-          - 5433:5432
-
-      # SonarQube server
-      sonarqube:
-        image: sonarqube:latest
-        env:
-          SONARQUBE_JDBC_URL: jdbc:postgresql://localhost:5433/sonar
-          SONARQUBE_JDBC_USERNAME: sonar
-          SONARQUBE_JDBC_PASSWORD: sonar
-        ports:
-          - 9000:9000
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -55,54 +24,89 @@ jobs:
           node-version: 18
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build TypeScript
-        run: npm run build
+        run: npm run build || true
 
-      # ------------------------------
-      # Trivy scan (container / image)
-      - name: Build Docker image
-        run: docker build -t vuln-todo-demo:latest .
-
-      - name: Run Trivy scan
+      - name: Start app in background
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v ${{ github.workspace }}/trivy-reports:/reports aquasec/trivy:latest \
-          image --format json --output /reports/trivy-image.json vuln-todo-demo:latest
+          npm run start &
+          sleep 10 # tunggu server siap
 
-      - name: Upload Trivy report
+  sonar_scan:
+    name: SonarQube Scan
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: SonarQube Scan
+        uses: sonarsource/sonarcloud-github-action@v2
+        with:
+          args: >
+            -Dsonar.projectKey=vuln-todo-demo
+            -Dsonar.organization=YOUR_ORG_KEY
+            -Dsonar.sources=src
+        env:
+          SONAR_TOKEN: ${{ secrets.MY_SONAR_TOKEN }}
+
+      - name: Upload SonarQube Report as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-report
-          path: trivy-reports/trivy-image.json
+          name: sonar-report
+          path: .scannerwork
 
-      # ------------------------------
-      # SonarQube scan
-      - name: SonarQube Scan
-        env:
-          SONAR_HOST_URL: http://sonarqube:9000
-          SONAR_LOGIN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          npx sonar-scanner \
-            -Dsonar.projectKey=vuln-todo-demo \
-            -Dsonar.sources=src \
-            -Dsonar.host.url=http://localhost:9000 \
-            -Dsonar.login=$SONAR_TOKEN
+  trivy_scan:
+    name: Trivy Scan
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # ------------------------------
-      # ZAP Baseline Scan
-      - name: Install ZAP baseline
-        run: |
-          wget https://github.com/zaproxy/zaproxy/releases/download/v2.13.0/ZAP_2.13.0_Linux.tar.gz -O zap.tar.gz
-          tar -xzf zap.tar.gz
-          export PATH=$PATH:$PWD/ZAP_2.13.0
+      - name: Install Trivy (image scan)
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          scan-type: image
+          image-ref: vuln-todo-demo:latest
+          format: json
+          output: trivy-image-report.json
 
-      - name: Run ZAP Baseline Scan
-        run: |
-          zap-baseline.py -t http://localhost:3000 -r zap_report.html
+      - name: Scan filesystem for dependencies
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          scan-type: fs
+          dir: /
+          format: json
+          output: trivy-fs-report.json
 
-      - name: Upload ZAP report
+      - name: Upload Trivy Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-reports
+          path: |
+            trivy-image-report.json
+            trivy-fs-report.json
+
+  zap_scan:
+    name: OWASP ZAP DAST Scan
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.7.0
+        with:
+          target: "http://localhost:3000"
+          format: "html"
+          output: "zap-report.html"
+
+      - name: Upload ZAP Report
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
-          path: zap_report.html
+          path: zap-report.html
