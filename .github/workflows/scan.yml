@@ -88,7 +88,7 @@ jobs:
           name: puzzle-todo-vulnerable-trivy-reports
           path: puzzle-todo-vulnerable-trivy-fs-report.json
 
-  zap_scan:
+    zap_scan:
     name: OWASP ZAP DAST Scan
     runs-on: ubuntu-latest
     needs: build
@@ -96,15 +96,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download ZAP Baseline Scan
+      - name: Run ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.7.0
         with:
           target: "http://localhost:3000"
-          format: "html"
-          output: "puzzle-todo-vulnerable-zap-report.html"
+          docker_name: "ghcr.io/zaproxy/zaproxy:stable"
+          cmd_options: "-r puzzle-todo-vulnerable-zap-report.html"
 
       - name: Upload ZAP Report
         uses: actions/upload-artifact@v4
         with:
           name: puzzle-todo-vulnerable-zap-report
           path: puzzle-todo-vulnerable-zap-report.html
+
