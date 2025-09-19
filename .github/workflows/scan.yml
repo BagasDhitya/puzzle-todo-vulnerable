@@ -59,18 +59,13 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.MY_SONAR_TOKEN }}
 
-      - name: Generate SonarQube HTML Report
-        run: |
-          # Jika menggunakan sonar-report-cli
-          sonar-report -i .scannerwork -o sonar-report.html || echo "Sonar HTML generation skipped"
-
-      - name: Upload SonarQube HTML Report
+      - name: Upload SonarQube Report as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: puzzle-todo-vulnerable-sonar-html
-          path: sonar-report.html
+          name: puzzle-todo-vulnerable-sonar-report
+          path: .scannerwork
 
-  trivy_scan:
+  docker_build_and_scan:
     name: Docker Trivy Scan
     runs-on: ubuntu-latest
     needs: build
@@ -83,17 +78,30 @@ jobs:
       - name: Load Docker image
         run: docker load -i puzzle-todo-vulnerable.tar
 
-      - name: Scan Docker image with Trivy (HTML)
-        run: |
-          docker run --rm -v $(pwd):/scan aquasecurity/trivy:0.31.0 \
-            image --format template --template "@contrib/html.tpl" \
-            -o trivy-report.html puzzle-todo-vulnerable:latest
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: "puzzle-todo-vulnerable:latest"
+
+      - name: Filesystem Scan with Trivy
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          scan-type: fs
+          dir: .
+          format: json
+          output: puzzle-todo-vulnerable-trivy-fs-report.json
 
       - name: Upload Trivy HTML Report
         uses: actions/upload-artifact@v4
         with:
           name: puzzle-todo-vulnerable-trivy-html
           path: trivy-report.html
+
+      - name: Upload Trivy JSON Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: puzzle-todo-vulnerable-trivy-reports
+          path: puzzle-todo-vulnerable-trivy-fs-report.json
 
   zap_scan:
     name: OWASP ZAP DAST Scan
@@ -109,7 +117,7 @@ jobs:
         run: docker load -i puzzle-todo-vulnerable.tar
 
       - name: Create docker network
-        run: docker network create zapnet || true
+        run: docker network create zapnet
 
       - name: Run app container on custom network
         run: |
@@ -121,7 +129,7 @@ jobs:
       - name: Prepare reports folder
         run: mkdir -p zap-reports && chmod 777 zap-reports
 
-      - name: Run ZAP Baseline Scan (HTML)
+      - name: Run ZAP Baseline Scan
         run: |
           docker run --rm --network zapnet \
             -v $(pwd)/zap-reports:/zap/wrk/:rw \
@@ -132,8 +140,12 @@ jobs:
             -J zap-report.json \
             -w zap-report.md
 
-      - name: Upload ZAP HTML Report
+      - name: Upload ZAP Reports
         uses: actions/upload-artifact@v4
         with:
-          name: puzzle-todo-vulnerable-zap-html
-          path: zap-reports/zap-report.html
+          name: puzzle-todo-vulnerable-zap-reports
+          path: zap-reports/
+
+
+
+
