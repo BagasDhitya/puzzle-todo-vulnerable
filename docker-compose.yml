@@ -1,5 +1,6 @@
+version: "3.9"
+
 services:
-  # SonarQube + DB
   sonarqube-db:
     image: postgres:14
     container_name: sonarqube-db
@@ -25,7 +26,6 @@ services:
       - sonarqube_data:/opt/sonarqube/data
       - sonarqube_extensions:/opt/sonarqube/extensions
 
-  # App DB for the vulnerable app
   app-db:
     image: postgres:14
     container_name: app-db
@@ -37,12 +37,11 @@ services:
       - "5432:5432"
     volumes:
       - app_db_data:/var/lib/postgresql/data
-      - ./sql:/docker-entrypoint-initdb.d  # run init.sql on first start
+      - ./sql:/docker-entrypoint-initdb.d
 
-  # Your vulnerable app (build locally)
-  app:
+  puzzle-todo-app:
     build: .
-    container_name: vuln-app
+    container_name: puzzle-todo-app
     depends_on:
       - app-db
     environment:
@@ -56,19 +55,17 @@ services:
       - "3000:3000"
     volumes:
       - ./:/usr/src/app
-    command: ["npm","run","start"]
+    command: ["npm", "run", "start"]
 
-  # ZAP: choose either zaproxy/zap-stable OR ghcr.io/zaproxy/zaproxy:stable
   zap:
-    image: zaproxy/zap-stable:latest
+    image: ghcr.io/zaproxy/zaproxy:stable
     container_name: zap
     entrypoint: ["sleep", "infinity"]
     ports:
       - "8080:8080"
     volumes:
-      - ./zap-reports:/zap/reports
+      - ./zap-reports:/zap/wrk
 
-  # Trivy (keystroke: run scans from this container)
   trivy:
     image: aquasec/trivy:latest
     container_name: trivy
