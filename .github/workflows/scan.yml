@@ -12,44 +12,99 @@ permissions:
 
 jobs:
   build:
-    name: Build Node App
+    name: 1️⃣ Build Node App
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: 1️⃣-checkout-repo
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: 1️⃣-setup-node
         uses: actions/setup-node@v3
         with:
           node-version: 18
 
-      - name: Install dependencies
+      - name: 1️⃣-install-dependencies
         run: npm ci
 
-      - name: Build TypeScript
+      - name: 1️⃣-build-typescript
         run: npm run build || true
 
-      - name: Build Docker image
+  docker_build:
+    name: 2️⃣ Docker Build & Save
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: 2️⃣-checkout-repo
+        uses: actions/checkout@v4
+
+      - name: 2️⃣-build-docker-image
         run: docker build -t puzzle-todo-vulnerable:latest .
 
-      - name: Save Docker image
+      - name: 2️⃣-save-docker-image
         run: docker save puzzle-todo-vulnerable:latest -o puzzle-todo-vulnerable.tar
 
-      - name: Upload Docker image as artifact
+      - name: 2️⃣-upload-docker-artifact
         uses: actions/upload-artifact@v4
         with:
           name: puzzle-todo-vulnerable-image
           path: puzzle-todo-vulnerable.tar
 
+  trivy_scan:
+    name: 3️⃣ Trivy Security Scan
+    runs-on: ubuntu-latest
+    needs: docker_build
+    steps:
+      - name: 3️⃣-download-docker-image
+        uses: actions/download-artifact@v4
+        with:
+          name: puzzle-todo-vulnerable-image
+
+      - name: 3️⃣-load-docker-image
+        run: docker load -i puzzle-todo-vulnerable.tar
+
+      - name: 3️⃣-trivy-docker-image-scan
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: "puzzle-todo-vulnerable:latest"
+
+      - name: 3️⃣-trivy-filesystem-html
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          scan-type: fs
+          input: .
+          format: template
+          template: "@contrib/html.tpl"
+          output: trivy-fs-report.html
+
+      - name: 3️⃣-upload-fs-html-report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-html
+          path: trivy-fs-report.html
+
+      - name: 3️⃣-trivy-filesystem-json
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          scan-type: fs
+          input: .
+          format: json
+          output: trivy-fs-report.json
+
+      - name: 3️⃣-upload-fs-json-report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-json
+          path: trivy-fs-report.json
+
   sonar_scan:
-    name: SonarQube Scan
+    name: 4️⃣ SonarQube Scan
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - name: Checkout repository
+      - name: 4️⃣-checkout-repo
         uses: actions/checkout@v4
 
-      - name: SonarQube Scan
+      - name: 4️⃣-sonar-scan
         uses: sonarsource/sonarcloud-github-action@v2
         with:
           args: >
@@ -59,78 +114,39 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.MY_SONAR_TOKEN }}
 
-      - name: Upload SonarQube Report as Artifact
+      - name: 4️⃣-upload-sonar-report
         uses: actions/upload-artifact@v4
         with:
           name: puzzle-todo-vulnerable-sonar-report
           path: .scannerwork
 
-  docker_build_and_scan:
-    name: Docker Trivy Scan
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Download Docker image
-        uses: actions/download-artifact@v4
-        with:
-          name: puzzle-todo-vulnerable-image
-
-      - name: Load Docker image
-        run: docker load -i puzzle-todo-vulnerable.tar
-
-      - name: Scan Docker image with Trivy
-        uses: aquasecurity/trivy-action@0.31.0
-        with:
-          image-ref: "puzzle-todo-vulnerable:latest"
-
-      - name: Filesystem Scan with Trivy
-        uses: aquasecurity/trivy-action@0.31.0
-        with:
-         scan-type: fs
-         input: ./src          # folder source code
-         format: json          # bisa juga template HTML
-         output: trivy-report.json
-
-
-      - name: Upload Trivy HTML Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: puzzle-todo-vulnerable-trivy-html
-          path: trivy-report.html
-
-      - name: Upload Trivy JSON Reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: puzzle-todo-vulnerable-trivy-reports
-          path: puzzle-todo-vulnerable-trivy-fs-report.json
-
   zap_scan:
-    name: OWASP ZAP DAST Scan
+    name: 5️⃣ OWASP ZAP DAST Scan
     runs-on: ubuntu-latest
-    needs: build
+    needs: docker_build
     steps:
-      - name: Download Docker image
+      - name: 5️⃣-download-docker-image
         uses: actions/download-artifact@v4
         with:
           name: puzzle-todo-vulnerable-image
 
-      - name: Load Docker image
+      - name: 5️⃣-load-docker-image
         run: docker load -i puzzle-todo-vulnerable.tar
 
-      - name: Create docker network
+      - name: 5️⃣-create-docker-network
         run: docker network create zapnet
 
-      - name: Run app container on custom network
+      - name: 5️⃣-run-app-container
         run: |
           docker run -d --name puzzle-todo-app --network zapnet -p 3000:3000 puzzle-todo-vulnerable:latest
           sleep 15
           docker ps
           docker logs puzzle-todo-app --tail 50
 
-      - name: Prepare reports folder
+      - name: 5️⃣-prepare-zap-reports-folder
         run: mkdir -p zap-reports && chmod 777 zap-reports
 
-      - name: Run ZAP Baseline Scan
+      - name: 5️⃣-run-zap-baseline
         run: |
           docker run --rm --network zapnet \
             -v $(pwd)/zap-reports:/zap/wrk/:rw \
@@ -141,12 +157,8 @@ jobs:
             -J zap-report.json \
             -w zap-report.md
 
-      - name: Upload ZAP Reports
+      - name: 5️⃣-upload-zap-reports
         uses: actions/upload-artifact@v4
         with:
           name: puzzle-todo-vulnerable-zap-reports
           path: zap-reports/
-
-
-
-
