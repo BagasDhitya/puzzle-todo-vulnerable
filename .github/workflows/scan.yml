@@ -67,15 +67,6 @@ jobs:
         with:
           image-ref: "puzzle-todo-vulnerable:latest"
 
-      - name: 3️⃣-upload-fs-html-report
-        uses: aquasecurity/trivy-action@0.31.0
-        with:
-          scan-type: fs
-          input: .
-          format: template
-          template: "@contrib/html.tpl"
-          output: trivy-fs-report.html
-
       - name: 3️⃣-upload-fs-json-report
         uses: actions/upload-artifact@v4
         with:
