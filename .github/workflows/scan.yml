@@ -112,30 +112,55 @@ jobs:
     runs-on: ubuntu-latest
     needs: docker_build
     steps:
-      - name: 5️⃣-download-docker-image
-        uses: actions/download-artifact@v4
-        with:
-          name: puzzle-todo-vulnerable-image
+    - name: 5️⃣-download-docker-image
+      uses: actions/download-artifact@v4
+      with:
+        name: puzzle-todo-vulnerable-image
 
-      - name: 5️⃣-load-docker-image
-        run: docker load -i puzzle-todo-vulnerable.tar
+    - name: 5️⃣-load-docker-image
+      run: docker load -i puzzle-todo-vulnerable.tar
 
-      - name: 5️⃣-create-docker-network
-        run: docker network create zapnet
+    - name: 5️⃣-create-docker-network
+      run: docker network create zapnet
 
-      - name: 5️⃣-run-app-container
-        run: |
-          docker run -d --name puzzle-todo-app --network zapnet -p 3000:3000 puzzle-todo-vulnerable:latest
-          sleep 15
-          docker ps
-          docker logs puzzle-todo-app --tail 50
+    - name: 5️⃣-run-app-container
+      run: |
+        docker run -d --name puzzle-todo-app --network zapnet -p 3000:3000 puzzle-todo-vulnerable:latest
+        sleep 15
+        echo "✅ App container logs:"
+        docker logs puzzle-todo-app --tail 50
 
-      - name: 5️⃣-prepare-zap-reports-folder
-        run: mkdir -p zap-reports && chmod 777 zap-reports
+    - name: 5️⃣-ensure-app-is-ready
+      run: |
+        echo "Checking if app is up..."
+        for i in {1..10}; do
+          if curl -s http://localhost:3000 > /dev/null; then
+            echo "✅ App is up!"
+            exit 0
+          fi
+          echo "⏳ App not ready yet... retrying ($i/10)"
+          sleep 5
+        done
+        echo "❌ App failed to start"
+        docker logs puzzle-todo-app
+        exit 1
 
-      - name: 5️⃣-run-zap-baseline
-        run: |
-          docker run --rm --network zapnet \
-            -v $(pwd)/zap-reports:/zap/wrk/:rw \
-            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-            -t http://puzzle-todo-app:3000
+    - name: 5️⃣-prepare-zap-reports-folder
+      run: mkdir -p zap-reports && chmod 777 zap-reports
+
+    - name: 5️⃣-run-zap-baseline
+      run: |
+        docker run --rm --network zapnet \
+          -v $(pwd)/zap-reports:/zap/wrk/:rw \
+          ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+          -t http://puzzle-todo-app:3000 \
+          --autooff \
+          -r zap-report.html \
+          -J zap-report.json \
+          -w zap-report.md
+
+    - name: 5️⃣-upload-zap-reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: zap-scan-reports
+        path: zap-reports
