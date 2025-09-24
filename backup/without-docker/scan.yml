@@ -1,0 +1,73 @@
+name: Security & Code Scan
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build_and_scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout repo
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🏗️ Build Typescript
+        run: npm run build
+
+      # 🔍 Trivy FS Scan
+      - name: 🔎 Trivy Filesystem Scan
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          scan-type: fs
+          input: .
+          format: json
+          output: trivy-fs-report.json
+
+      - name: 📤 Upload Trivy Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-json
+          path: trivy-fs-report.json
+
+      # 🔍 SonarQube / SonarCloud scan
+      - name: 🔎 Sonar Scan
+        uses: sonarsource/sonarcloud-github-action@v2
+        with:
+          args: >
+            -Dsonar.projectKey=BagasDhitya_puzzle-todo-vulnerable
+            -Dsonar.organization=bagasdhitya
+            -Dsonar.sources=src
+        env:
+          SONAR_TOKEN: ${{ secrets.MY_SONAR_TOKEN }}
+
+      # 🔍 ZAP DAST Scan (tanpa Docker, jalanin app langsung)
+      - name: ▶️ Run App
+        run: |
+          npm run start &
+          sleep 15
+
+      - name: 🔎 OWASP ZAP Baseline Scan
+        run: |
+          docker run --rm \
+            -v $(pwd)/zap-reports:/zap/wrk/:rw \
+            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+            -t http://host.docker.internal:3000 \
+            -r zap-report.html \
+            -J zap-report.json \
+            -w zap-report.md
+
+      - name: 📤 Upload ZAP Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-scan-reports
+          path: zap-reports

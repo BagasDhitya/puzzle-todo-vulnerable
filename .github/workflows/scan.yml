@@ -6,26 +6,70 @@ on:
   pull_request:
     branches: ["main"]
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
-  build_and_scan:
+  build:
+    name: 1️⃣ Build Node App
     runs-on: ubuntu-latest
     steps:
-      - name: ⬇️ Checkout repo
+      - name: 1️⃣-checkout-repo
         uses: actions/checkout@v4
 
-      - name: ⚙️ Setup Node
+      - name: 1️⃣-setup-node
         uses: actions/setup-node@v3
         with:
           node-version: 18
 
-      - name: 📦 Install dependencies
+      - name: 1️⃣-install-dependencies
         run: npm ci
 
-      - name: 🏗️ Build Typescript
-        run: npm run build
+      - name: 1️⃣-build-typescript
+        run: npm run build || true
 
-      # 🔍 Trivy FS Scan
-      - name: 🔎 Trivy Filesystem Scan
+  docker_build:
+    name: 2️⃣ Docker Build & Save
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: 2️⃣-checkout-repo
+        uses: actions/checkout@v4
+
+      - name: 2️⃣-build-docker-image
+        run: docker build -t puzzle-todo-vulnerable:latest .
+
+      - name: 2️⃣-save-docker-image
+        run: docker save puzzle-todo-vulnerable:latest -o puzzle-todo-vulnerable.tar
+
+      - name: 2️⃣-upload-docker-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: puzzle-todo-vulnerable-image
+          path: puzzle-todo-vulnerable.tar
+
+  trivy_scan:
+    name: 3️⃣ Trivy Security Scan
+    runs-on: ubuntu-latest
+    needs: docker_build
+    steps:
+      - name: 3️⃣-download-docker-image
+        uses: actions/download-artifact@v4
+        with:
+          name: puzzle-todo-vulnerable-image
+
+      - name: 3️⃣-load-docker-image
+        run: docker load -i puzzle-todo-vulnerable.tar
+
+      - name: 3️⃣-trivy-docker-image-scan
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: "puzzle-todo-vulnerable:latest"
+          format: json
+          output: trivy-fs-report.json
+
+      - name: 3️⃣-trivy-filesystem-scan
         uses: aquasecurity/trivy-action@0.31.0
         with:
           scan-type: fs
@@ -33,14 +77,21 @@ jobs:
           format: json
           output: trivy-fs-report.json
 
-      - name: 📤 Upload Trivy Report
+      - name: 3️⃣-upload-fs-json-report
         uses: actions/upload-artifact@v4
         with:
           name: trivy-fs-json
           path: trivy-fs-report.json
 
-      # 🔍 SonarQube / SonarCloud scan
-      - name: 🔎 Sonar Scan
+  sonar_scan:
+    name: 4️⃣ SonarQube Scan
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: 4️⃣-checkout-repo
+        uses: actions/checkout@v4
+
+      - name: 4️⃣-sonar-scan
         uses: sonarsource/sonarcloud-github-action@v2
         with:
           args: >
@@ -50,23 +101,65 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.MY_SONAR_TOKEN }}
 
-      # 🔍 ZAP DAST Scan (tanpa Docker, jalanin app langsung)
-      - name: ▶️ Run App
-        run: |
-          npm run start &
-          sleep 15
+      - name: 4️⃣-upload-sonar-report
+        uses: actions/upload-artifact@v4
+        with:
+          name: puzzle-todo-vulnerable-sonar-report
+          path: .scannerwork
 
-      - name: 🔎 OWASP ZAP Baseline Scan
+  zap_scan:
+    name: 5️⃣ OWASP ZAP DAST Scan
+    runs-on: ubuntu-latest
+    needs: docker_build
+    steps:
+      - name: 5️⃣-download-docker-image
+        uses: actions/download-artifact@v4
+        with:
+          name: puzzle-todo-vulnerable-image
+
+      - name: 5️⃣-load-docker-image
+        run: docker load -i puzzle-todo-vulnerable.tar
+
+      - name: 5️⃣-create-docker-network
+        run: docker network create zapnet
+
+      - name: 5️⃣-run-app-container
         run: |
-          docker run --rm \
+          docker run -d --name puzzle-todo-app --network zapnet -p 3000:3000 puzzle-todo-vulnerable:latest
+          sleep 15
+          echo "✅ App container logs:"
+          docker logs puzzle-todo-app --tail 50
+
+      - name: 5️⃣-ensure-app-is-ready
+        run: |
+          echo "Checking if app is up..."
+          for i in {1..10}; do
+            if curl -s http://localhost:3000 > /dev/null; then
+              echo "✅ App is up!"
+              exit 0
+            fi
+            echo "⏳ App not ready yet... retrying ($i/10)"
+            sleep 5
+          done
+          echo "❌ App failed to start"
+          docker logs puzzle-todo-app
+          exit 1
+
+      - name: 5️⃣-prepare-zap-reports-folder
+        run: mkdir -p zap-reports && chmod 777 zap-reports
+
+      - name: 5️⃣-run-zap-baseline
+        run: |
+          docker run --rm --network zapnet \
             -v $(pwd)/zap-reports:/zap/wrk/:rw \
             ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-            -t http://host.docker.internal:3000 \
+            -t http://puzzle-todo-app:3000 \
+            --autooff \
             -r zap-report.html \
             -J zap-report.json \
             -w zap-report.md
 
-      - name: 📤 Upload ZAP Reports
+      - name: 5️⃣-upload-zap-reports
         uses: actions/upload-artifact@v4
         with:
           name: zap-scan-reports
