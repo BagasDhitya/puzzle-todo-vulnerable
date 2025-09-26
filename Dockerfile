@@ -5,7 +5,7 @@ WORKDIR /usr/src/app
 
 # install deps
 COPY package.json package-lock.json* ./
-RUN npm install --production
+RUN npm install
 
 COPY . .
 

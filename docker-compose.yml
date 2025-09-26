@@ -60,16 +60,34 @@ services:
   zap:
     image: ghcr.io/zaproxy/zaproxy:stable
     container_name: zap
-    entrypoint: ["sleep", "infinity"]
+    entrypoint:
+      [
+        "zap.sh",
+        "-daemon",
+        "-host", "0.0.0.0",
+        "-port", "8080",
+        "-config", "api.key=12345",
+        "-config", "api.addrs.addr.name=.*",
+        "-config", "api.addrs.addr.regex=true"
+      ]
     ports:
       - "8080:8080"
     volumes:
       - ./zap-reports:/zap/wrk
+    networks:
+      - puzzle-todos_default
 
   trivy:
     image: aquasec/trivy:latest
     container_name: trivy
-    entrypoint: ["sleep", "infinity"]
+    command:
+      [
+        "trivy", "fs",
+        "--exit-code", "0",
+        "--no-progress",
+        "--output", "/reports/fs-report.txt",
+        "/"
+      ]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./trivy-reports:/reports
@@ -81,3 +99,7 @@ volumes:
   sonarqube_extensions:
   app_db_data:
   trivy_cache:
+
+networks:
+  puzzle-todos_default:
+    external: true
